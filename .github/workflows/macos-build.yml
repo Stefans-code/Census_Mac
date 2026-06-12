@@ -1,0 +1,111 @@
+name: Build macOS DMG
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+concurrency:
+  group: macos-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      # Non annullare l'altra architettura se una fallisce
+      fail-fast: false
+      matrix:
+        include:
+          # Intel: runner arm64 veloce con emulazione x86_64 (Rosetta).
+          # Le dipendenze di Census sono pure-Python o con wheel x86_64: nessuna compilazione.
+          - runner: macos-14
+            arch: Intel
+            prefix: "arch -x86_64"
+          - runner: macos-14
+            arch: AppleSilicon
+            prefix: ""
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        ${{ matrix.prefix }} python -m pip install --upgrade pip --no-cache-dir
+        ${{ matrix.prefix }} pip install -r requirements.txt --no-cache-dir
+        ${{ matrix.prefix }} pip install pyinstaller --no-cache-dir
+
+    - name: Build app bundle
+      run: |
+        ${{ matrix.prefix }} pyinstaller main.py \
+          --name Census \
+          --windowed \
+          --noconfirm \
+          --clean \
+          --icon icon.icns \
+          --collect-all customtkinter \
+          --add-data "icon.png:." \
+          --add-data "icon.ico:." \
+          --add-data "bg_watermark.png:."
+
+    - name: Compress App Bundle
+      run: |
+        cd dist
+        tar -czf ../Census_${{ matrix.arch }}.tar.gz Census.app
+
+    - name: Upload Build Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Census-app-${{ matrix.arch }}
+        path: Census_${{ matrix.arch }}.tar.gz
+
+  package:
+    needs: build
+    runs-on: macos-latest
+    steps:
+    - name: Download Intel Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: Census-app-Intel
+
+    - name: Download AppleSilicon Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: Census-app-AppleSilicon
+
+    - name: Extract and Rename App Bundles
+      run: |
+        mkdir -p dmg_folder
+        tar -xzf Census_Intel.tar.gz -C dmg_folder
+        mv "dmg_folder/Census.app" "dmg_folder/Census (Intel).app"
+
+        tar -xzf Census_AppleSilicon.tar.gz -C dmg_folder
+        mv "dmg_folder/Census.app" "dmg_folder/Census (Apple Silicon).app"
+
+    - name: Create Single Universal DMG
+      run: |
+        brew install create-dmg
+        create-dmg \
+          --volname "Census Installer" \
+          --window-pos 200 120 \
+          --window-size 650 450 \
+          --icon-size 100 \
+          --icon "Census (Apple Silicon).app" 150 150 \
+          --icon "Census (Intel).app" 350 150 \
+          --hide-extension "Census (Apple Silicon).app" \
+          --hide-extension "Census (Intel).app" \
+          --app-drop-link 550 150 \
+          "Census_macOS.dmg" \
+          "dmg_folder"
+
+    - name: Upload Universal DMG Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Census-macOS-Universal-DMG
+        path: Census_macOS.dmg
