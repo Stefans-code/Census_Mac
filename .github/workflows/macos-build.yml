@@ -50,9 +50,11 @@ jobs:
           --clean \
           --icon icon.icns \
           --collect-all customtkinter \
+          --hidden-import jwt \
           --add-data "icon.png:." \
           --add-data "icon.ico:." \
-          --add-data "bg_watermark.png:."
+          --add-data "bg_watermark.png:." \
+          --add-data "license_manager.py:."
 
     - name: Compress App Bundle
       run: |

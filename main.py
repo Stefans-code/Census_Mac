@@ -13,6 +13,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import views.auxiliary
 import views.parameters
 from utils import theme
+from license_manager import LicenseManager
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -38,6 +39,10 @@ class CensusModernApp(ctk.CTk):
         database.init_db()
         # Stile scuro globale per tutte le tabelle ttk
         theme.setup_treeview_style()
+
+        # --- LICENZA: verifica all'avvio (stesse regole di Datarium) ---
+        self.license = LicenseManager()
+        self.is_licensed, self.license_status = self.license.verify_license()
 
         # Set Window Icon
         import sys, os
@@ -160,6 +165,7 @@ class CensusModernApp(ctk.CTk):
         # --- UTILITA ---
         add_menu("Utilità", [
             ("Impostazioni", lambda: self.open_module("settings")),
+            ("Licenza / Attivazione", self.show_license_info),
             ("-", None),
             ("Copia di sicurezza", self.do_backup),
             ("Recupero Database", self.do_restore),
@@ -268,6 +274,10 @@ class CensusModernApp(ctk.CTk):
         self.show_dashboard()
         self.update_status_bar()
 
+        # Gate licenza: se non valida, blocca con la schermata di attivazione
+        if not self.is_licensed:
+            self.after(300, self.show_activation_gate)
+
     def update_status_bar(self):
         try:
             d = database.get_dashboard_data()
@@ -344,6 +354,105 @@ class CensusModernApp(ctk.CTk):
                    fatt_rows, "Nessuna fattura emessa").grid(row=0, column=0, padx=(0, 8), sticky="nsew")
         mini_table(panels, "⏰  Prossime scadenze", ("Data", "Tipo", "Soggetto", "Importo"),
                    scad_rows, "Nessuna scadenza aperta").grid(row=0, column=1, padx=(8, 0), sticky="nsew")
+
+    # ==================== LICENZA ====================
+    def show_activation_gate(self):
+        """Schermata modale di attivazione: blocca l'app finché non c'è una licenza valida."""
+        gate = ctk.CTkToplevel(self)
+        gate.title("Attivazione Census")
+        gate.geometry("520x420")
+        gate.configure(fg_color=theme.BG)
+        gate.resizable(False, False)
+        gate.transient(self)
+        self._gate = gate
+
+        # Centra sullo schermo
+        gate.update_idletasks()
+        x = (gate.winfo_screenwidth() - 520) // 2
+        y = (gate.winfo_screenheight() - 420) // 2
+        gate.geometry(f"520x420+{x}+{y}")
+
+        try:
+            gate.after(250, gate.grab_set)
+        except Exception:
+            pass
+
+        # Chiudere la finestra senza attivare = esci dall'app
+        def on_close():
+            if not self.is_licensed:
+                self.destroy()
+            else:
+                gate.destroy()
+        gate.protocol("WM_DELETE_WINDOW", on_close)
+
+        ctk.CTkLabel(gate, text="🔒  Attivazione richiesta", font=theme.font(20, bold=True),
+                     text_color=theme.TEXT).pack(pady=(26, 4))
+        ctk.CTkLabel(gate, text="Census richiede una licenza valida per questo computer.",
+                     font=theme.font(12), text_color=theme.TEXT_DIM).pack(pady=(0, 18))
+
+        # HWID
+        card = theme.card(gate)
+        card.pack(fill="x", padx=30)
+        ctk.CTkLabel(card, text="Codice macchina (HWID) — comunicalo per ricevere la licenza:",
+                     font=theme.font(11), text_color=theme.TEXT_DIM).pack(anchor="w", padx=16, pady=(14, 4))
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.pack(fill="x", padx=16, pady=(0, 14))
+        hwid = self.license.get_hwid()
+        ent = ctk.CTkEntry(row, font=theme.font(13, bold=True))
+        ent.insert(0, hwid)
+        ent.configure(state="readonly")
+        ent.pack(side="left", fill="x", expand=True)
+
+        def copy_hwid():
+            self.clipboard_clear()
+            self.clipboard_append(hwid)
+            btn_copy.configure(text="✔ Copiato")
+            gate.after(1500, lambda: btn_copy.configure(text="📋 Copia"))
+        btn_copy = ctk.CTkButton(row, text="📋 Copia", width=90, fg_color=theme.SURFACE_2,
+                                 hover_color=theme.BORDER, command=copy_hwid)
+        btn_copy.pack(side="left", padx=(8, 0))
+
+        status = ctk.CTkLabel(gate, text=f"Stato: {self.license_status}",
+                              font=theme.font(11), text_color=theme.RED)
+        status.pack(pady=14)
+
+        def load_file():
+            path = filedialog.askopenfilename(
+                parent=gate, title="Seleziona file licenza",
+                filetypes=[("Licenza Census", "*.census"), ("Tutti i file", "*.*")])
+            if not path:
+                return
+            try:
+                with open(path, "r") as f:
+                    token = f.read().strip()
+            except Exception as e:
+                status.configure(text=f"Errore lettura file: {e}", text_color=theme.RED)
+                return
+            ok, msg = self.license.verify_license(token)
+            if ok:
+                self.license.save_license(token)
+                self.is_licensed = True
+                self.license_status = msg
+                status.configure(text=f"✔ {msg}", text_color=theme.GREEN)
+                messagebox.showinfo("Attivazione", f"Licenza attivata!\n{msg}", parent=gate)
+                gate.destroy()
+                self.show_dashboard()
+                self.update_status_bar()
+            else:
+                status.configure(text=f"✖ {msg}", text_color=theme.RED)
+
+        ctk.CTkButton(gate, text="📁  Carica file licenza (.census)", height=42,
+                      font=theme.font(13, bold=True), fg_color=theme.ACCENT,
+                      hover_color=theme.ACCENT_H, command=load_file).pack(padx=30, fill="x")
+        ctk.CTkButton(gate, text="Esci", height=34, fg_color="transparent",
+                      border_width=1, border_color=theme.BORDER, text_color=theme.TEXT_DIM,
+                      command=on_close).pack(padx=30, pady=12, fill="x")
+
+    def show_license_info(self):
+        """Apre la schermata licenza dal menu (per vedere stato o sostituire la licenza)."""
+        # Riverifica lo stato in tempo reale
+        self.is_licensed, self.license_status = self.license.verify_license()
+        self.show_activation_gate()
 
     # ==================== UTILITÀ DATABASE ====================
     def do_backup(self):

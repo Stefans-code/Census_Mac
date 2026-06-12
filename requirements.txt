@@ -2,3 +2,4 @@ reportlab
 customtkinter
 pillow
 openpyxl
+PyJWT
