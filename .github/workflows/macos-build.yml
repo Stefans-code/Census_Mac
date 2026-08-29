@@ -51,6 +51,7 @@ jobs:
           --icon icon.icns \
           --collect-all customtkinter \
           --hidden-import jwt \
+          --hidden-import cryptography \
           --add-data "icon.png:." \
           --add-data "icon.ico:." \
           --add-data "bg_watermark.png:." \
