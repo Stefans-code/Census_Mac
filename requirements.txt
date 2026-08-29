@@ -3,3 +3,4 @@ customtkinter
 pillow
 openpyxl
 PyJWT
+cryptography

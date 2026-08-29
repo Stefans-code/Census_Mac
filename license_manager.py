@@ -10,9 +10,20 @@ class LicenseManager:
     JWT HS256 firmato, binding all'HWID della macchina, scadenza e
     revoca online opzionale via Supabase."""
 
-    # Deve corrispondere a license_maker.py (modalità Census)
-    LICENSE_SECRET = "census_offline_secure_key_2026_x99"
-    ALGORITHM = "HS256"
+    # SECURITY: verifica RS256 con SOLO la chiave PUBBLICA (asimmetrica). Prima era HS256
+    # con un secret simmetrico hardcoded qui — chiunque lo estraesse dall'eseguibile poteva
+    # firmarsi licenze valide da solo, bypassando Stripe/Supabase. La chiave PRIVATA che
+    # firma vive solo nei secrets della Edge Function `sign-license` (mai su un pc cliente).
+    LICENSE_PUBLIC_KEY = """-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArohawDtocrzq7M/NDqX+
+h8S+eBQ870KQC3iCpIJ/9I8fXOS3vuuG8eZPoh2jNbnPKOcdYgatv4t29SGW7Yal
+/1WIveQhmXloTCGNNoK5zqRpl2tosILk0CabW4j3r3qaZs373N+NUCv7sfb6hRRa
+v9fkV/ymuR0r53Ouena0PD7+u18nIdhrqDJQVWeouScKyoxrv406AhM1Okp5L0dj
+7K8TwTDZ38KExfD0ErWLYOjBkH92ONrwrtHdZq2V14sHS0aVhWJSXEWbrMoFjhw7
+/OeTfPNiYnlZt66nOGurf1XURhx0MszneLY0CqomZWgr5OoCY5OL3x307H66b8Du
+HQIDAQAB
+-----END PUBLIC KEY-----"""
+    ALGORITHM = "RS256"
     APP_NAME = "Census"
     LICENSE_EXT = ".census"
 
@@ -150,7 +161,7 @@ class LicenseManager:
                 return False, "Licenza mancante"
 
         try:
-            payload = jwt.decode(token, self.LICENSE_SECRET, algorithms=[self.ALGORITHM])
+            payload = jwt.decode(token, self.LICENSE_PUBLIC_KEY, algorithms=[self.ALGORITHM])
 
             if payload.get("hwid") != current_hwid:
                 return False, f"Hardware ID non corrispondente (Locale: {current_hwid})"
